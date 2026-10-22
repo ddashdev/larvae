@@ -174,12 +174,21 @@ names the comment. Larvae keeps the file exactly as it was, and the run reports
 the error.
 
 This check is a safety measure, not the fix. Each position it catches is a
-position that the emitter must learn to place. The check costs one pass over
-the comment list.
+position that the emitter must learn to place. Comments come out in source
+order, so each search starts where the last one ended, and a comment that
+`sort_requires` moved above another falls back to the whole output.
 */
 pub(crate) fn check_comments_survived(src: &str, comments: &[(u32, u32)], out: &str) -> Result<()> {
+    let mut from = 0;
+
     for &(start, end) in comments {
         let text = src[start as usize..end as usize].trim_end();
+
+        if let Some(at) = out[from..].find(text) {
+            from += at + text.len();
+
+            continue;
+        }
 
         if !out.contains(text) {
             anyhow::bail!("formatting would drop the comment {text:?}, so the file was left alone");

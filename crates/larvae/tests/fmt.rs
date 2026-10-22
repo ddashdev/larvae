@@ -806,6 +806,17 @@ fn sorting_is_idempotent_and_keeps_every_comment() {
     }
 }
 
+/// A sort can move a comment above one it followed, where the comment check falls back.
+#[test]
+fn a_sort_that_reorders_comments_keeps_every_one() {
+    let src = "-- about b\nlocal b = require(\"b\")\n-- about a\nlocal a = require(\"a\")\n";
+
+    assert_eq!(
+        fmt_with(src, sorting(RequireGrouping::Flat)),
+        "-- about a\nlocal a = require(\"a\")\n-- about b\nlocal b = require(\"b\")\n"
+    );
+}
+
 // --- regressions found by review -------------------------------------------
 
 /// Two adjacent minus signs make a line comment.
@@ -950,6 +961,18 @@ fn a_comment_after_a_call_argument_is_kept() {
     let src = "g(\n\ta, -- first\n\tb -- second\n)\n";
 
     assert_eq!(fmt(src), src);
+}
+
+/// A commented call finds its `(` from its first argument, or from the `)` of an empty list.
+#[test]
+fn a_comment_in_an_empty_call_or_beside_a_callback_is_kept() {
+    for src in [
+        "f( -- nothing yet\n)\n",
+        "connect(\n\t-- why\n\tfunction()\n\t\tfire()\n\tend\n)\n",
+        "connect(\n\tsignal, -- the event\n\tfunction()\n\t\tfire()\n\tend\n)\n",
+    ] {
+        assert_eq!(fmt(src), src);
+    }
 }
 
 #[test]
