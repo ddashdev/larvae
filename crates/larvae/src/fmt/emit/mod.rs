@@ -940,6 +940,66 @@ pub(super) fn is_simple(stmt: &Stmt) -> bool {
     )
 }
 
+/// Reports if a statement holds a function.
+pub(super) fn holds_function(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Local(n) => n.values.iter().any(has_function),
+        Stmt::Assign(n) => n.targets.iter().chain(&n.values).any(has_function),
+        Stmt::Call(e, _) => has_function(e),
+        Stmt::Return(n) => n.values.iter().any(has_function),
+        _ => false,
+    }
+}
+
+/// Reports if an expression holds a function. It does not look inside an interpolated string.
+fn has_function(e: &Expr) -> bool {
+    match e {
+        Expr::Function { .. } => true,
+
+        Expr::Call { func, args, .. } => {
+            has_function(func)
+                || match args {
+                    CallArgs::Paren(list) => list.iter().any(has_function),
+
+                    CallArgs::Table(table) => has_function(table),
+
+                    CallArgs::Str(_) => false,
+                }
+        }
+
+        Expr::Table { fields, .. } => fields.iter().any(|field| match field {
+            TableField::Positional(value) | TableField::Named { value, .. } => has_function(value),
+
+            TableField::Computed { key, value } => has_function(key) || has_function(value),
+        }),
+
+        Expr::Index { object, key, .. } => {
+            has_function(object) || matches!(key, IndexKey::Computed(k) if has_function(k))
+        }
+
+        Expr::Binary { lhs, rhs, .. } => has_function(lhs) || has_function(rhs),
+
+        Expr::Unary { operand, .. } => has_function(operand),
+
+        Expr::Paren { inner, .. } => has_function(inner),
+
+        Expr::TypeAssert { expr, .. } => has_function(expr),
+
+        Expr::IfElse {
+            branches,
+            else_value,
+            ..
+        } => {
+            branches
+                .iter()
+                .any(|(_, cond, value)| has_function(cond) || has_function(value))
+                || has_function(else_value)
+        }
+
+        _ => false,
+    }
+}
+
 /// The single argument form that a call uses. The `call_parentheses` option needs this.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub(super) enum Single {

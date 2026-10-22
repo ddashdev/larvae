@@ -144,6 +144,10 @@ fn the_documented_fmt_defaults_match() {
         from_example.collapse_simple_statement,
         default.collapse_simple_statement
     );
+    assert_eq!(
+        from_example.collapse_empty_block,
+        default.collapse_empty_block
+    );
     assert_eq!(from_example.block_newline_gaps, default.block_newline_gaps);
     assert_eq!(
         from_example.magic_trailing_comma,

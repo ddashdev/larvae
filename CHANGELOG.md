@@ -4,6 +4,25 @@ Notable changes land here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow
 [semver](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- `[fmt] collapse_empty_block` decides which empty bodies stay on one line,
+  with the values of `collapse_simple_statement`
+
+### Changed
+
+- An empty function collapses by default and prints as `function() end`.
+  `collapse_empty_block = "never"` keeps it open
+- A function that holds another function stays open
+
+### Fixed
+
+- A body with a trailing `;`, or a blank line under
+  `block_newline_gaps = "never"`, collapses on the first format instead of
+  the second
+
 ## 0.10.0
 
 larvae stops serving types. `larvae lsp` keeps the lints, the format, and

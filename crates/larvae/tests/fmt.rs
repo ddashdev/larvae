@@ -626,6 +626,285 @@ fn collapse_is_off_by_default() {
     );
 }
 
+fn collapse(mode: CollapseSimpleStatement) -> FmtConfig {
+    FmtConfig {
+        collapse_simple_statement: mode,
+        ..Default::default()
+    }
+}
+
+fn empty(mode: CollapseSimpleStatement) -> FmtConfig {
+    FmtConfig {
+        collapse_empty_block: mode,
+        ..Default::default()
+    }
+}
+
+/*
+`collapse_empty_block` decides the empty bodies, with the values of
+`collapse_simple_statement`. A body with a comment stays open in every mode.
+*/
+#[test]
+fn collapse_empty_block_decides_the_empty_bodies() {
+    let open = "local f = function()\nend\nif x then\nend\nlocal g = function()\n\t-- todo\nend\n";
+    let one_line =
+        "local f = function() end\nif x then end\nlocal g = function()\n\t-- todo\nend\n";
+
+    let cases = [
+        (CollapseSimpleStatement::Never, open),
+        (
+            CollapseSimpleStatement::FunctionOnly,
+            "local f = function() end\nif x then\nend\nlocal g = function()\n\t-- todo\nend\n",
+        ),
+        (
+            CollapseSimpleStatement::ConditionalOnly,
+            "local f = function()\nend\nif x then end\nlocal g = function()\n\t-- todo\nend\n",
+        ),
+        (CollapseSimpleStatement::Always, one_line),
+    ];
+
+    for (mode, want) in cases {
+        assert_eq!(fmt_with(open, empty(mode)), want, "{mode:?}");
+    }
+
+    let preserve = empty(CollapseSimpleStatement::Preserve);
+
+    assert_eq!(fmt_with(open, preserve.clone()), open);
+    assert_eq!(fmt_with(one_line, preserve), one_line);
+
+    // `function-only` is the default, and `collapse_simple_statement` does not reach an empty body.
+    assert_eq!(
+        fmt_with(open, collapse(CollapseSimpleStatement::Never)),
+        cases[1].1
+    );
+    assert_eq!(
+        fmt_with(
+            one_line,
+            FmtConfig {
+                collapse_simple_statement: CollapseSimpleStatement::Always,
+                ..empty(CollapseSimpleStatement::Never)
+            }
+        ),
+        open
+    );
+}
+
+/// A function that holds a function opens, and the inner one keeps its line. An `if` does not.
+#[test]
+fn a_function_that_holds_a_function_opens_around_it() {
+    let cfg = collapse(CollapseSimpleStatement::Always);
+
+    assert_eq!(
+        fmt_with(
+            "local function f() return function() return 1 end end\n",
+            cfg.clone()
+        ),
+        "local function f()\n\treturn function() return 1 end\nend\n"
+    );
+
+    // The search reaches calls, tables, operators and `if` expressions.
+    for src in [
+        "local function f() g(function() end) end\n",
+        "local function f() local x = { a = function() end } end\n",
+        "local function f() return a and function() end end\n",
+        "local function f() return if c then function() end else nil end\n",
+    ] {
+        let out = fmt_with(src, cfg.clone());
+
+        assert!(out.lines().count() > 1, "{src:?} collapsed to {out:?}");
+    }
+
+    let guard = "if x then g(function() end) end\n";
+
+    assert_eq!(fmt_with(guard, cfg), guard);
+}
+
+/// A stray `;` and a removed require print nothing, so a body of them is empty.
+#[test]
+fn a_body_of_what_the_formatter_drops_collapses_at_once() {
+    let always = collapse(CollapseSimpleStatement::Always);
+
+    assert_eq!(
+        fmt_with("local function f() ; end\n", always.clone()),
+        "local function f() end\n"
+    );
+
+    assert_eq!(
+        fmt_with("local function f()\n\treturn 1;\nend\n", always.clone()),
+        "local function f() return 1 end\n"
+    );
+
+    let remove = FmtConfig {
+        unused_imports: UnusedImports::Remove,
+        ..always
+    };
+
+    assert_eq!(
+        fmt_with(
+            "local function f()\n\tlocal Signal = require(\"@pkg/signal\")\nend\n",
+            remove
+        ),
+        "local function f() end\n"
+    );
+}
+
+/// A blank line holds a body open only where `block_newline_gaps` keeps it.
+#[test]
+fn a_blank_line_holds_a_body_open_only_where_it_survives() {
+    let src = "local function f()\n\n\treturn 1\nend\n";
+
+    assert_eq!(
+        fmt_with(src, collapse(CollapseSimpleStatement::Always)),
+        "local function f() return 1 end\n"
+    );
+
+    let kept = FmtConfig {
+        collapse_simple_statement: CollapseSimpleStatement::Always,
+        ..gaps(larvae::fmt::config::BlockNewlineGaps::Preserve)
+    };
+
+    assert_eq!(fmt_with(src, kept), src);
+}
+
+/// `preserve` reads the whole construct, so a header over several lines keeps the body open.
+#[test]
+fn preserve_reads_the_whole_construct() {
+    let cfg = preserve();
+
+    assert_eq!(
+        fmt_with(
+            "local function lerp(\n\ta: number,\n\tb: number\n): number return a + b end\n",
+            cfg.clone()
+        ),
+        "local function lerp(a: number, b: number): number\n\treturn a + b\nend\n"
+    );
+
+    assert_eq!(
+        fmt_with("if not character\n\tor not humanoid then return end\n", cfg),
+        "if not character or not humanoid then\n\treturn\nend\n"
+    );
+}
+
+/// Sources that exercise every path through a collapsible body.
+const COLLAPSE_SOURCES: &[&str] = &[
+    "if not ok then return end\n",
+    "if not ok then\n\treturn\nend\n",
+    "local function f(a) return a end\n",
+    "local function f(a)\n\treturn a\nend\n",
+    "local f = function() end\n",
+    "local f = function()\nend\n",
+    "if x then end\n",
+    "if x then\nend\n",
+    "signal:Connect(function() end)\n",
+    "signal:Connect(function()\n\tfire()\nend)\n",
+    "pcall(function()\n\treturn aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa == bbb\nend, 5)\n",
+    "pcall(function() end, 5)\n",
+    "task.defer(someLongArgumentName, anotherLongArgumentName, function() return x end)\n",
+    "local function lerp(\n\ta: number,\n\tb: number\n): number return a + b end\n",
+    "if not character\n\tor not humanoid then return end\n",
+    "local function f()\n\n\treturn 1\nend\n",
+    "local function f()\n\treturn 1;\nend\n",
+    "local function f() ; end\n",
+    "local function f()\n\n\nend\n",
+    "local function f()\n\tlocal Signal = require(\"@pkg/signal\")\nend\n",
+    "local t = { run = function() return 1 end, stop = function()\nend }\n",
+    "local function outer() return function() return 1 end end\n",
+    "if a then return function()\n\treturn 1\nend end\n",
+    "local function f(a) --[[ why ]] return a end\n",
+    "local function f() g(function() end) end\n",
+    "if x then g(function() end) end\n",
+    "for _, v in t do if v then break end end\n",
+];
+
+const COLLAPSE_MODES: [CollapseSimpleStatement; 5] = [
+    CollapseSimpleStatement::Never,
+    CollapseSimpleStatement::FunctionOnly,
+    CollapseSimpleStatement::ConditionalOnly,
+    CollapseSimpleStatement::Always,
+    CollapseSimpleStatement::Preserve,
+];
+
+/// The configs a collapse meets: the call layouts, the block gaps, a removal, a narrow line.
+fn collapse_bases() -> Vec<FmtConfig> {
+    vec![
+        FmtConfig::default(),
+        calls(ListExpansion::WhenNeeded, CallStyle::HugLast),
+        calls(ListExpansion::Always, CallStyle::OnePerLine),
+        gaps(larvae::fmt::config::BlockNewlineGaps::Preserve),
+        FmtConfig {
+            unused_imports: UnusedImports::Remove,
+            ..Default::default()
+        },
+        narrow(40),
+    ]
+}
+
+#[test]
+fn every_collapse_mode_is_idempotent_and_parses() {
+    for src in COLLAPSE_SOURCES.iter().chain(SAMPLES) {
+        for base in collapse_bases() {
+            for (mode, empty) in COLLAPSE_MODES
+                .iter()
+                .flat_map(|m| COLLAPSE_MODES.iter().map(move |e| (*m, *e)))
+            {
+                let cfg = FmtConfig {
+                    collapse_simple_statement: mode,
+                    collapse_empty_block: empty,
+                    ..base.clone()
+                };
+
+                let once = fmt_with(src, cfg.clone());
+                let twice = fmt_with(&once, cfg);
+
+                assert_eq!(
+                    once, twice,
+                    "unstable under {mode:?}, {empty:?} for {src:?}"
+                );
+
+                let lexed = larvae::syntax::lexer::lex(&once)
+                    .unwrap_or_else(|e| panic!("{src:?} gave unlexable output, {}", e.message));
+
+                larvae::syntax::parser::parse(&once, &lexed.toks)
+                    .unwrap_or_else(|e| panic!("{src:?} gave unparsable output, {}", e.message));
+
+                for line in once.lines() {
+                    assert_eq!(line, line.trim_end(), "trailing whitespace from {src:?}");
+                }
+            }
+        }
+    }
+}
+
+/*
+The output of `never` has every body open, and the output of `always` has
+every body that fits collapsed, so `preserve` keeps both as they are.
+*/
+#[test]
+fn preserve_changes_nothing_in_the_output_of_never_or_always() {
+    for src in COLLAPSE_SOURCES.iter().chain(SAMPLES) {
+        for base in collapse_bases() {
+            let with = |mode| FmtConfig {
+                collapse_simple_statement: mode,
+                collapse_empty_block: mode,
+                ..base.clone()
+            };
+
+            for end in [
+                CollapseSimpleStatement::Never,
+                CollapseSimpleStatement::Always,
+            ] {
+                let out = fmt_with(src, with(end));
+
+                assert_eq!(
+                    fmt_with(&out, with(CollapseSimpleStatement::Preserve)),
+                    out,
+                    "preserve moved the {end:?} output of {src:?}"
+                );
+            }
+        }
+    }
+}
+
 // --- types -----------------------------------------------------------------
 
 #[test]
@@ -851,8 +1130,8 @@ fn a_bracket_index_of_a_long_string_keeps_its_space() {
 
 #[test]
 fn const_function_stays_const() {
-    assert_eq!(fmt("const function f() end"), "const function f()\nend\n");
-    assert_eq!(fmt("local function f() end"), "local function f()\nend\n");
+    assert_eq!(fmt("const function f() end"), "const function f() end\n");
+    assert_eq!(fmt("local function f() end"), "local function f() end\n");
 }
 
 /// A type can hold an expression through typeof. There, the tokens in `and 1`
@@ -2747,7 +3026,7 @@ fn export_by_value_prints_as_written() {
     for src in [
         "export local version = \"5.1\"\n",
         "export const TAU = math.pi * 2\n",
-        "export function init()\nend\n",
+        "export function init() end\n",
     ] {
         assert_eq!(fmt(src), src);
     }
@@ -2791,7 +3070,7 @@ const HUG_SOURCE: &str = "Colors:Apply(frame, \"Rarity\", rarity, { Children = {
 #[test]
 fn a_call_keeps_its_layout_by_default() {
     assert_eq!(fmt("f(a, b, c)"), "f(a, b, c)\n");
-    assert_eq!(fmt("function f(a, b) end"), "function f(a, b)\nend\n");
+    assert_eq!(fmt("function f(a, b) end"), "function f(a, b) end\n");
 }
 
 /*
@@ -3287,9 +3566,10 @@ fn only_a_require_counts_as_an_import() {
 fn a_dead_import_inside_a_function_is_handled() {
     let src = "local function f()\n\tlocal Dead = require(\"@pkg/Dead\")\nend\n\nreturn f\n";
 
+    // The body is empty once the require goes, and an empty function collapses.
     assert_eq!(
         fmt_with(src, imports(UnusedImports::Remove)),
-        "local function f()\nend\n\nreturn f\n"
+        "local function f() end\n\nreturn f\n"
     );
     assert_eq!(
         fmt_with(src, imports(UnusedImports::Underscore)),

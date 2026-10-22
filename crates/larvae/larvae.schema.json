@@ -912,6 +912,17 @@
           "default": "always",
           "description": "Whether a call with one string or table argument keeps its parentheses. \"input\" keeps whatever the author wrote. \"as-needed\" is the same setting as \"none\" under the name Biome and Prettier use. Both drop the parentheses only where Luau allows the bare form, which is one string or one table; a single identifier keeps them, because `h a` is a syntax error.\n\n[call_parentheses \u2192](https://larvae-luau.github.io/docs/reference/formatting#call-parentheses)"
         },
+        "collapse_empty_block": {
+          "enum": [
+            "never",
+            "function-only",
+            "conditional-only",
+            "always",
+            "preserve"
+          ],
+          "default": "function-only",
+          "description": "Which empty bodies may stay on one line, ex: `function() end`. It takes the values of collapse_simple_statement.\n\n[collapse_empty_block \u2192](https://larvae-luau.github.io/docs/reference/formatting#collapse-empty-block)"
+        },
         "collapse_simple_statement": {
           "enum": [
             "never",
