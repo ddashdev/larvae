@@ -174,7 +174,8 @@ jobs:
     # A prerelease tag builds and lands on GitHub, and stops there. A
     # version on crates.io cannot be taken back, so an in-dev build does
     # not spend one.
-    if: ${{ !contains(needs.verify.outputs.tag, '-') }}
+    # Only larvae-luau/larvae holds the crates.io token, so a fork stops at GitHub.
+    if: ${{ !contains(needs.verify.outputs.tag, '-') && github.repository == 'larvae-luau/larvae' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
