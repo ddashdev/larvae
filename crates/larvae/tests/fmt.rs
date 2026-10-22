@@ -963,6 +963,18 @@ fn a_comment_after_a_call_argument_is_kept() {
     assert_eq!(fmt(src), src);
 }
 
+/// A commented call finds its `(` from its first argument, or from the `)` of an empty list.
+#[test]
+fn a_comment_in_an_empty_call_or_beside_a_callback_is_kept() {
+    for src in [
+        "f( -- nothing yet\n)\n",
+        "connect(\n\t-- why\n\tfunction()\n\t\tfire()\n\tend\n)\n",
+        "connect(\n\tsignal, -- the event\n\tfunction()\n\t\tfire()\n\tend\n)\n",
+    ] {
+        assert_eq!(fmt(src), src);
+    }
+}
+
 #[test]
 fn call_argument_comments_survive_a_second_pass() {
     let src = "f(\n\t-- why\n\tx\n)\n";

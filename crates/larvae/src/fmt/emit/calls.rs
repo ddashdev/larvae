@@ -165,7 +165,21 @@ impl<'a> Emitter<'a> {
     */
     fn commented_args(&self, list: &[Expr], span: TokSpan) -> Option<Doc<'a>> {
         let close = span.end - 1;
-        let open = self.matching_open_paren(close)?;
+
+        /*
+        The `(` is the token before the first argument, or before the `)` of
+        an empty list. The walk back from the `)` reads every argument, a
+        whole callback included, so it stays only as the fallback.
+        */
+        let guess = list.first().map_or(close.saturating_sub(1), |a| {
+            a.span().start.saturating_sub(1)
+        });
+
+        let open = match self.tok(close) == ")" && self.tok(guess) == "(" {
+            true => guess,
+
+            false => self.matching_open_paren(close)?,
+        };
         let (lo, hi) = (self.tok_end(open), self.tok_start(close));
 
         if self.trivia.between(lo, hi).is_empty() {
