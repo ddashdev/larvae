@@ -160,31 +160,6 @@ impl<'a> Doc<'a> {
             Self::Concat(parts) => Doc::Concat(parts.into_iter().map(Doc::into_owned).collect()),
         }
     }
-
-    /*
-    Reports if content inside this document forces a break.
-
-    The renderer cannot print a hard newline or a blank line flat. So each
-    group that contains one breaks before the renderer considers its width.
-    This rule is the reason a function body with statements always expands.
-    */
-    fn must_break(&self) -> bool {
-        match self {
-            Self::Hard | Self::Blank => true,
-
-            // A long comment that spans lines cannot sit on a flat line.
-            Self::Text(s) => s.contains('\n'),
-
-            Self::Group(inner) | Self::Indent(inner) => inner.must_break(),
-
-            // Only the flat side can exclude flat mode. The broken side never runs flat.
-            Self::IfBreak(flat, _) => flat.must_break(),
-
-            Self::Concat(parts) => parts.iter().any(Self::must_break),
-
-            _ => false,
-        }
-    }
 }
 
 /// Controls how the renderer lays text out.
@@ -249,6 +224,7 @@ pub fn render(doc: &Doc<'_>, style: Style) -> String {
     let mut out = String::with_capacity(256);
     let mut column = 0usize;
     let mut stack = vec![(0usize, Mode::Broken, doc)];
+    let mut measure = Vec::new();
 
     while let Some((depth, mode, doc)) = stack.pop() {
         match doc {
@@ -314,9 +290,9 @@ pub fn render(doc: &Doc<'_>, style: Style) -> String {
                 /*
                 This is the one decision this file exists to make. A group is
                 flat when it has no forced break and its remaining content fits
-                in the columns left on this line.
+                in the columns left on this line. `fits` answers both.
                 */
-                let mode = if !inner.must_break() && fits(inner, style, column) {
+                let mode = if fits(inner, style, column, &mut measure) {
                     Mode::Flat
                 } else {
                     Mode::Broken
@@ -355,10 +331,19 @@ The function measures from `column`. So the same group can be flat in one
 place and broken in another place. Users expect this behavior from a
 formatter. A simple check of only the node length produces bad output for
 this reason.
+
+The caller lends the stack, so a render allocates one, not one per group.
 */
-fn fits(doc: &Doc<'_>, style: Style, column: usize) -> bool {
+fn fits<'d, 'a>(
+    doc: &'d Doc<'a>,
+    style: Style,
+    column: usize,
+    stack: &mut Vec<&'d Doc<'a>>,
+) -> bool {
     let mut remaining = style.width.saturating_sub(column);
-    let mut stack = vec![doc];
+
+    stack.clear();
+    stack.push(doc);
 
     while let Some(doc) = stack.pop() {
         match doc {
