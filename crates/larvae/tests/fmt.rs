@@ -806,6 +806,17 @@ fn sorting_is_idempotent_and_keeps_every_comment() {
     }
 }
 
+/// A sort can move a comment above one it followed, where the comment check falls back.
+#[test]
+fn a_sort_that_reorders_comments_keeps_every_one() {
+    let src = "-- about b\nlocal b = require(\"b\")\n-- about a\nlocal a = require(\"a\")\n";
+
+    assert_eq!(
+        fmt_with(src, sorting(RequireGrouping::Flat)),
+        "-- about a\nlocal a = require(\"a\")\n-- about b\nlocal b = require(\"b\")\n"
+    );
+}
+
 // --- regressions found by review -------------------------------------------
 
 /// Two adjacent minus signs make a line comment.
