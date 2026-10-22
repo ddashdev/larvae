@@ -157,9 +157,7 @@ impl<'a> Emitter<'a> {
             is gone is for the author to remove. Larvae cannot know whether
             the words were about the import or about the code below it.
             */
-            if self.unused.removals.contains(&stmt.span().start)
-                && self.verbatim_stmt(stmt).is_none()
-            {
+            if self.removed(stmt) {
                 /*
                 The removed line leaves no gap behind. The cursor stays
                 put, so its comments still reach the next statement, and
@@ -407,17 +405,14 @@ impl<'a> Emitter<'a> {
     Emits a block that can collapse onto one line.
 
     `collapse_simple_statement` applies only to a block that holds exactly
-    one statement. That statement must have no nested block and no comments
-    to lose. The check is narrow on purpose. A collapse of anything else
-    hides code.
+    one statement, and `collapse_empty_block` to one that holds none. That
+    statement must have no nested block and no comments to lose. The check
+    is narrow on purpose. A collapse of anything else hides code.
     */
-    pub(super) fn collapsible(&self, block: &Block, allowed: bool) -> Doc<'a> {
-        if !allowed || block.stmts.len() != 1 || !is_simple(&block.stmts[0]) {
+    pub(super) fn collapsible(&self, block: &Block, allowed: bool, empty: bool) -> Doc<'a> {
+        if !allowed && !empty {
             return self.nested(block);
         }
-
-        let stmt = &block.stmts[0];
-        let span = stmt.span();
 
         // A comment at any position in the block prevents the collapse. The comment would move.
         if !self
@@ -428,10 +423,25 @@ impl<'a> Emitter<'a> {
             return self.nested(block);
         }
 
-        // A blank line from the author also prevents it. That line is an intended separation.
-        if self
-            .trivia
-            .blank_between(self.block_lo(block), self.tok_start(span.start))
+        // A stray `;` and a removed require print nothing, so neither counts.
+        let mut printed = block
+            .stmts
+            .iter()
+            .filter(|s| !matches!(s, Stmt::Empty(_)) && !self.removed(s));
+
+        let stmt = match (printed.next(), printed.next()) {
+            (None, _) if empty => return Doc::Line,
+
+            (Some(stmt), None) if allowed && is_simple(stmt) => stmt,
+
+            _ => return self.nested(block),
+        };
+
+        // A blank line the block keeps also prevents it. That line is an intended separation.
+        if self.cfg.block_newline_gaps == BlockNewlineGaps::Preserve
+            && self
+                .trivia
+                .blank_between(self.block_lo(block), self.tok_start(stmt.span().start))
         {
             return self.nested(block);
         }
@@ -442,26 +452,36 @@ impl<'a> Emitter<'a> {
         ])
     }
 
-    /// Reports if the function whose body spans `span` may collapse.
-    pub(super) fn collapse_functions(&self, span: TokSpan) -> bool {
-        match self.cfg.collapse_simple_statement {
+    /// Reports if the function with this `body` may collapse under `mode`.
+    pub(super) fn collapse_functions(
+        &self,
+        mode: CollapseSimpleStatement,
+        body: &FunctionBody,
+    ) -> bool {
+        let collapses = match mode {
             CollapseSimpleStatement::FunctionOnly | CollapseSimpleStatement::Always => true,
 
-            CollapseSimpleStatement::Preserve => self.one_line(span),
+            CollapseSimpleStatement::Preserve => self.one_line(body.span),
 
             _ => false,
-        }
+        };
+
+        // A function that holds a function stays open, so a line never carries two bodies.
+        collapses && !body.block.stmts.iter().any(holds_function)
     }
 
-    /// Reports if the `if` statement at `span` may collapse.
-    pub(super) fn collapse_conditionals(&self, span: TokSpan) -> bool {
-        match self.cfg.collapse_simple_statement {
+    /// Reports if the `if` statement `n` may collapse under `mode`.
+    pub(super) fn collapse_conditionals(&self, mode: CollapseSimpleStatement, n: &If) -> bool {
+        let collapses = match mode {
             CollapseSimpleStatement::ConditionalOnly | CollapseSimpleStatement::Always => true,
 
-            CollapseSimpleStatement::Preserve => self.one_line(span),
+            CollapseSimpleStatement::Preserve => self.one_line(n.span),
 
             _ => false,
-        }
+        };
+
+        // Only an `if` with one branch and no `else` can collapse.
+        collapses && n.branches.len() == 1 && n.else_block.is_none()
     }
 
     /// Reports if the author wrote `span` on one line.
@@ -469,6 +489,11 @@ impl<'a> Emitter<'a> {
         let (lo, hi) = self.byte_span(span);
 
         !self.src[lo as usize..hi as usize].contains('\n')
+    }
+
+    /// Reports if `unused_imports` drops this statement. A `fmt off` region keeps it.
+    fn removed(&self, stmt: &Stmt) -> bool {
+        self.unused.removals.contains(&stmt.span().start) && self.verbatim_stmt(stmt).is_none()
     }
 }
 

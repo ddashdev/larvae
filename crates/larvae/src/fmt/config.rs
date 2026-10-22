@@ -943,6 +943,10 @@ pub struct FmtConfig {
     pub sort_requires: SortRequires,
 
     // --- options beyond stylua -------------------------------------------
+    /// Selects which empty bodies can stay on one line, with `collapse_simple_statement`'s values.
+    #[serde(default = "default_collapse_empty_block")]
+    pub collapse_empty_block: CollapseSimpleStatement,
+
     /// Selects which keyword binds a required module.
     #[serde(default)]
     pub require_binding: RequireBinding,
@@ -1086,6 +1090,10 @@ fn default_indent_width() -> usize {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_collapse_empty_block() -> CollapseSimpleStatement {
+    CollapseSimpleStatement::FunctionOnly
 }
 
 impl Default for FmtConfig {
